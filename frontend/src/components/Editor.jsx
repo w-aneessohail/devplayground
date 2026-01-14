@@ -1,14 +1,36 @@
-export default function Editor() {
+import { useRef } from "react";
+import MonacoEditor from "@monaco-editor/react";
+
+export default function Editor({ language, defaultValue, onCodeChange, onRun }) {
+  const editorRef = useRef(null);
+
+  function handleEditorDidMount(editor, monaco) {
+    editorRef.current = editor;
+
+    // Ctrl+Enter shortcut
+    editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+      () => {
+        const currentCode = editor.getValue(); // always get latest code
+        onRun(currentCode);
+      }
+    );
+  }
+
   return (
-    <div
-      style={{
-        height: "100%",
-        background: "#1e1e1e",
-        color: "#fff",
-        padding: "16px",
+    <MonacoEditor
+      height="100%"
+      defaultLanguage={language}
+      defaultValue={defaultValue}
+      theme="vs-dark"
+      options={{
+        automaticLayout: true,
+        fontSize: 16,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
       }}
-    >
-      Editor will go here
-    </div>
+      onChange={onCodeChange}
+      onMount={handleEditorDidMount}
+    />
   );
 }
