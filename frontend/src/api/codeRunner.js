@@ -1,4 +1,4 @@
-const BASE_URL = 'https://ce.judge0.com/submissions';
+const BASE_URL = import.meta.env.VITE_JUDGE0_BASE_URL;
 
 // Request config for submitting code
 export const getSubmitConfig = (code, languageId) => ({
