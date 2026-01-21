@@ -1,18 +1,18 @@
-const BASE_URL = import.meta.env.VITE_JUDGE0_BASE_URL;
+import { HTTP_METHODS } from '../enums/httpMethods';
 
-// Request config for submitting code
+const BASE_URL = import.meta.env.VITE_JUDGE0_BASE_URL || 'https://ce.judge0.com';
+
 export const getSubmitConfig = (code, languageId) => ({
-  url: `${BASE_URL}/?base64_encoded=false&wait=false`,
-  method: 'POST',
-  body: {
+  url: `${BASE_URL}/submissions/?base64_encoded=false&wait=false`,
+  method: HTTP_METHODS.POST,
+  data: {
     source_code: code,
     language_id: languageId,
     stdin: '',
   },
 });
 
-// Request config for polling submission status
 export const getPollConfig = (token) => ({
-  url: `${BASE_URL}/${token}?base64_encoded=false`,
-  method: 'GET',
+  url: `${BASE_URL}/submissions/${token}?base64_encoded=false`,
+  method: HTTP_METHODS.GET,
 });
