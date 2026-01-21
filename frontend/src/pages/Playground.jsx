@@ -4,128 +4,122 @@ import Navbar from '../components/Navbar';
 import ProblemDescription from '../components/ProblemDescription';
 import CodeEditor from '../components/CodeEditor';
 import OutputPanel from '../components/OutputPanel';
+import useAxios from '../hooks/useAxios';
 import { CURATED_LANGUAGES, DEFAULT_LANG } from '../utils/languageOptions';
+import { getLanguagesApi, codeSubmissionApi, pollSubmitStatusApi } from '../api/codeRunner';
 
-// Helper to get curated language info + real ID from API list
+// Helper to get language info + real ID from fetched list
 const getLanguageInfo = (name, apiLanguages) => {
   const curated = CURATED_LANGUAGES.find(l => l.name === name) || CURATED_LANGUAGES[0];
-  
-  // Try to find matching real ID from Judge0 API
-  const apiMatch = apiLanguages.find(l => 
-    l.name.toLowerCase().includes(name.toLowerCase()) ||
-    l.name.toLowerCase().includes(curated.monaco.toLowerCase())
-  );
-
+  const apiMatch = apiLanguages.find(l => l.name.toLowerCase().includes(name.toLowerCase()));
   return {
     ...curated,
-    judge0Id: apiMatch ? apiMatch.id : (curated.judge0Id || 63), // fallback to curated/default
+    judge0Id: apiMatch ? apiMatch.id : 63, 
   };
 };
 
 export default function Playground() {
-  const [code, setCode] = useState(getLanguageInfo(DEFAULT_LANG, []).snippet);
+  const [code, setCode] = useState('');
   const [output, setOutput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [selectedLanguageName, setSelectedLanguageName] = useState(DEFAULT_LANG);
-  const [apiLanguages, setApiLanguages] = useState([]); // full list from Judge0
+  const [apiLanguages, setApiLanguages] = useState([]);
 
-  // Fetch real languages from Judge0 once on mount
+  // Fetch all languages
+  const { data: languagesData, loading: langLoading, error: langError } = useAxios(
+    getLanguagesApi().url,
+    getLanguagesApi().method,
+    null,
+    [] 
+  );
+
   useEffect(() => {
-    fetch('https://ce.judge0.com/languages')
-      .then(res => res.json())
-      .then(data => {
-        setApiLanguages(data);
-        console.log('Judge0 languages loaded:', data.length, 'languages');
-      })
-      .catch(err => {
-        console.error('Failed to fetch Judge0 languages:', err);
-        // Continue with curated defaults
-      });
-  }, []);
+    if (languagesData) {
+      setApiLanguages(languagesData);
+      console.log('Languages loaded:', languagesData.length);
+    }
+    if (langError) {
+      console.error('Languages fetch failed:', langError);
+      setOutput('Failed to load languages – using defaults');
+    }
+  }, [languagesData, langError]);
 
-  // Get current language info (curated + real ID)
+  // Get selected language info
   const selectedLang = getLanguageInfo(selectedLanguageName, apiLanguages);
 
   // Reset code when language changes
   useEffect(() => {
     setCode(selectedLang.snippet);
     setOutput('');
-  }, [selectedLanguageName]);
+  }, [selectedLanguageName, selectedLang.snippet]);
 
-  const handleRun = async () => {
+  const handleRun = () => {
     setIsRunning(true);
-    setOutput('Submitting code to Judge0...');
+    setOutput('Submitting code...');
 
-    try {
-      const submitResponse = await fetch(
-        'https://ce.judge0.com/submissions/?base64_encoded=false&wait=false',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            source_code: code,
-            language_id: selectedLang.judge0Id,
-            stdin: '',
-          }),
-        }
-      );
+    // Submit code api call
+    const submitConfig = codeSubmissionApi(code, selectedLang.judge0Id);
+    const { data: submitData, loading: submitLoading, error: submitError } = useAxios(
+      submitConfig.url,
+      submitConfig.method,
+      submitConfig.data,
+      [code, selectedLang.judge0Id]  // re-submit if code/language changes
+    );
 
-      if (!submitResponse.ok) {
-        throw new Error(`Submission failed: ${submitResponse.status} ${submitResponse.statusText}`);
-      }
-
-      const { token } = await submitResponse.json();
+    // Poll when token arrives
+    useEffect(() => {
+      if (!submitData?.token) return;
 
       let attempts = 0;
-      while (attempts < 30) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
+      const interval = setInterval(() => {
+        if (attempts >= 30) {
+          setOutput('Timeout: Execution took too long');
+          setIsRunning(false);
+          clearInterval(interval);
+          return;
+        }
 
-        const statusResponse = await fetch(
-          `https://ce.judge0.com/submissions/${token}?base64_encoded=false`
+        const pollConfig = pollSubmitStatusApi(submitData.token);
+        const { data: resultData, error: pollError } = useAxios(
+          pollConfig.url,
+          pollConfig.method,
+          null,
+          [submitData.token, attempts]  // re-poll on attempt change
         );
 
-        if (!statusResponse.ok) {
-          throw new Error(`Status check failed: ${statusResponse.status}`);
+        if (pollError) {
+          setOutput(`Poll error: ${pollError}`);
+          setIsRunning(false);
+          clearInterval(interval);
+          return;
         }
 
-        const data = await statusResponse.json();
-
-        if (data.status?.id <= 2) {
+        if (resultData?.status?.id > 2) {
+          let text = '';
+          if (resultData.compile_output) text += `Compile:\n${resultData.compile_output.trim()}\n\n`;
+          if (resultData.stdout) text += `Output:\n${resultData.stdout.trim()}`;
+          if (resultData.stderr) text += `\nError:\n${resultData.stderr.trim()}`;
+          if (resultData.message) text += `\nMessage:\n${resultData.message}`;
+          setOutput(text || 'No output received');
+          setIsRunning(false);
+          clearInterval(interval);
+        } else {
           setOutput(`Processing... (${attempts + 1}/30)`);
           attempts++;
-          continue;
         }
+      }, 1500);
 
-        let outputText = '';
+      return () => clearInterval(interval);
+    }, [submitData?.token]);
 
-        if (data.compile_output) {
-          outputText += `Compilation output:\n${data.compile_output.trim()}\n\n`;
-        }
-        if (data.stdout) {
-          outputText += `Output:\n${data.stdout.trim()}`;
-        }
-        if (data.stderr) {
-          outputText += `\n\nError (stderr):\n${data.stderr.trim()}`;
-        }
-        if (data.message) {
-          outputText += `\n\nMessage:\n${data.message}`;
-        }
-
-        setOutput(outputText || 'No output received');
-        break;
+    // Handle submit loading/error
+    useEffect(() => {
+      if (submitLoading) setOutput('Submitting...');
+      if (submitError) {
+        setOutput(`Submit error: ${submitError}`);
+        setIsRunning(false);
       }
-
-      if (attempts >= 30) {
-        setOutput('Timeout: Execution took too long (over 45 seconds)');
-      }
-    } catch (err) {
-      setOutput(`Error during execution:\n${err.message}\n\nTry again or check your code.`);
-      console.error(err);
-    } finally {
-      setIsRunning(false);
-    }
+    }, [submitLoading, submitError]);
   };
 
   const handleReset = () => {
@@ -134,7 +128,7 @@ export default function Playground() {
   };
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-gray-950 text-gray-100">
       <Header />
       <Navbar 
         onRun={handleRun}
@@ -154,7 +148,7 @@ export default function Playground() {
           <div className="flex-1">
             <CodeEditor 
               value={code}
-              onChange={(value) => setCode(value || '')}
+              onChange={setCode}
               language={selectedLang.monaco}
             />
           </div>

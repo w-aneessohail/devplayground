@@ -2,7 +2,14 @@ import { HTTP_METHODS } from '../enums/httpMethods';
 
 const BASE_URL = import.meta.env.VITE_JUDGE0_BASE_URL || 'https://ce.judge0.com';
 
-export const getSubmitConfig = (code, languageId) => ({
+// fetching all languages
+export const getLanguagesApi = () => ({
+  url: `${BASE_URL}/languages`,
+  method: HTTP_METHODS.GET,
+});
+
+// submitting code
+export const codeSubmissionApi = (code, languageId) => ({
   url: `${BASE_URL}/submissions/?base64_encoded=false&wait=false`,
   method: HTTP_METHODS.POST,
   data: {
@@ -12,7 +19,8 @@ export const getSubmitConfig = (code, languageId) => ({
   },
 });
 
-export const getPollConfig = (token) => ({
+// polling submission status
+export const pollSubmitStatusApi = (token) => ({
   url: `${BASE_URL}/submissions/${token}?base64_encoded=false`,
   method: HTTP_METHODS.GET,
 });
