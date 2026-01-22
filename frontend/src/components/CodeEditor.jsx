@@ -5,7 +5,7 @@ import { MonacoLanguageClient } from 'monaco-languageclient';
 import { createConnection } from 'vscode-languageserver-protocol';
 
 // Critical: Initialize VS Code services (must be done once, outside component)
-import { init as initServices } from 'monaco-languageclient/vscode-services';
+import { init as initServices } from 'monaco-languageclient';
 initServices(); // This fixes "Default api is not ready yet"
 
 export default function CodeEditor({ value, onChange, language }) {
