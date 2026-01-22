@@ -8,7 +8,10 @@ export default function CodeEditor({ value, onChange, language }) {
 
   useEffect(() => {
     // Only enable LSP for Python (add more languages later)
-    if (language !== 'python') {
+    const langLower = language.toLowerCase();
+    console.log('Current language (lowercased):', langLower);
+
+    if (langLower !== 'python') {
       // Stop LSP if switching away
       if (clientRef.current) {
         clientRef.current.stop();
