@@ -1,84 +1,125 @@
 import { useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
 import { MonacoLanguageClient } from "monaco-languageclient";
-import { listen } from "vscode-ws-jsonrpc";
+import {
+  toSocket,
+  WebSocketMessageReader,
+  WebSocketMessageWriter,
+} from "vscode-ws-jsonrpc";
 
 export default function CodeEditor({ value, onChange, language }) {
-  const editorRef = useRef(null);
   const clientRef = useRef(null);
   const socketRef = useRef(null);
 
   useEffect(() => {
-    const lang = language?.toLowerCase();
+    const lang = (language || "").toLowerCase();
 
     // Stop LSP if not Python
     if (lang !== "python") {
       if (clientRef.current) {
-        clientRef.current.stop();
+        try {
+          clientRef.current.stop();
+        } catch (e) {
+          console.log("[LSP] Error stopping client:", e.message);
+        }
         clientRef.current = null;
       }
+
       if (socketRef.current) {
-        socketRef.current.close();
+        try {
+          socketRef.current.close();
+        } catch (e) {
+          console.log("[LSP] Error closing socket:", e.message);
+        }
         socketRef.current = null;
       }
       return;
     }
 
-    console.log("[LSP] Starting Python LSP");
+    console.log("[LSP] Starting Python LSP...");
 
-    const socket = new WebSocket("ws://localhost:3000/python");
-    socketRef.current = socket;
+    // Create WebSocket connection
+    const ws = new WebSocket("ws://localhost:3000/python");
+    socketRef.current = ws;
 
-    listen({
-      webSocket: socket,
-      onConnection: (connection) => {
-        console.log("[LSP] WebSocket connected");
+    ws.onopen = () => {
+      console.log("[LSP] WebSocket connected");
 
+      try {
+        // Create JSON-RPC transports
+        const rpcSocket = toSocket(ws);
+        const reader = new WebSocketMessageReader(rpcSocket);
+        const writer = new WebSocketMessageWriter(rpcSocket);
+
+        // Create and start client
         const client = new MonacoLanguageClient({
           name: "Python Language Client",
           clientOptions: {
             documentSelector: ["python"],
-            workspaceFolder: {
-              uri: "file:///workspace",
-              name: "workspace",
-            },
-            // Use default handlers instead of CloseAction/ErrorAction
             errorHandler: {
-              error: () => ({ action: 1 }),   // 1 = Continue
-              closed: () => ({ action: 2 }),  // 2 = Restart
+              error: () => ({ action: 1 }), // Continue
+              closed: () => ({ action: 2 }), // Restart
             },
           },
           connectionProvider: {
-            get: async () => connection,
+            get: async () => ({ reader, writer }),
           },
         });
 
-        client.start();
         clientRef.current = client;
 
-        connection.onClose(() => {
-          console.log("[LSP] Connection closed");
-          client.stop();
-          clientRef.current = null;
-        });
-      },
-    });
-
-    socket.onerror = (err) => {
-      console.error("[LSP] WebSocket error", err);
+        // Start client
+        client.start();
+        console.log("[LSP] Python LSP client started successfully");
+      } catch (error) {
+        console.error("[LSP] Error creating client:", error);
+        ws.close();
+      }
     };
 
-    return () => {
+    ws.onerror = (err) => {
+      console.error("[LSP] WebSocket error:", err);
+    };
+
+    ws.onclose = () => {
+      console.log("[LSP] Connection closed");
       if (clientRef.current) {
-        clientRef.current.stop();
+        try {
+          clientRef.current.stop();
+        } catch (e) {
+          console.log("[LSP] Error stopping client on close:", e.message);
+        }
         clientRef.current = null;
       }
-      if (socketRef.current) {
-        socketRef.current.close();
-        socketRef.current = null;
+    };
+
+    // Cleanup on unmount or language change
+    return () => {
+      if (clientRef.current) {
+        try {
+          clientRef.current.stop();
+        } catch (e) {
+          console.log("[LSP] Error during cleanup:", e.message);
+        }
+        clientRef.current = null;
       }
+
+      if (socketRef.current && socketRef.current.readyState !== 3) {
+        try {
+          socketRef.current.close();
+        } catch (e) {
+          console.log("[LSP] Error closing socket during cleanup:", e.message);
+        }
+      }
+      socketRef.current = null;
     };
   }, [language]);
+
+  // Give Monaco a stable "file" URI for Python (helps LSP like Pyright)
+  const path =
+    (language || "").toLowerCase() === "python"
+      ? "file:///workspace/main.py"
+      : "file:///workspace/main.txt";
 
   return (
     <div className="h-full w-full">
@@ -88,17 +129,14 @@ export default function CodeEditor({ value, onChange, language }) {
         theme="vs-dark"
         value={value}
         onChange={onChange}
+        path={path}
         options={{
           minimap: { enabled: false },
           fontSize: 14,
-          renderValidationDecorations: "on",
           lineNumbersMinChars: 3,
           padding: { top: 16 },
           scrollBeyondLastLine: false,
           automaticLayout: true,
-        }}
-        onMount={(editor) => {
-          editorRef.current = editor;
         }}
       />
     </div>
