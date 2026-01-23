@@ -14,6 +14,7 @@
   "type": "module",
   "dependencies": {
     "pyright": "^1.1.408",
+    "vscode-ws-jsonrpc": "^3.5.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {
