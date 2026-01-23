@@ -13,17 +13,10 @@ wss.on('connection', (ws, req) => {
   let serverProcess;
 
   if (path === '/python') {
-//     const pyrightLocalPath = './node_modules/.bin/pyright-langserver.cmd';
-//   serverProcess = spawn(pyrightLocalPath, ['--stdio']);
-    // const pyrightPath = 'C:/Users/Anees Prince/AppData/Roaming/npm/pyright-langserver.cmd';
-    // serverProcess = spawn('cmd.exe', ['/c', 'pyright-langserver --stdio']);
-    // serverProcess = spawn('npx', ['pyright-langserver', '--stdio']);
-    // serverProcess = spawn(pyrightPath, ['--stdio']);
-    // serverProcess = spawn('npx', ['pyright-langserver', '--stdio']);
     const pyrightCmd = '"C:/Users/Anees Prince/AppData/Roaming/npm/pyright-langserver.cmd"';
     serverProcess = spawn('cmd.exe', ['/c', pyrightCmd, '--stdio'], {
-    shell: true,  // important for cmd.exe
-  });
+      shell: true,
+    });
     console.log('Pyright started via cmd.exe wrapper with absolute path');
   } else {
     ws.send(JSON.stringify({ error: 'Unsupported language' }));
