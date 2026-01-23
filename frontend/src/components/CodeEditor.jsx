@@ -1,11 +1,10 @@
 import { useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
+import { MonacoLanguageClient } from "monaco-languageclient";
 import {
-  MonacoLanguageClient,
-  CloseAction,
-  ErrorAction,
-} from "monaco-languageclient";
-import { listen } from "vscode-ws-jsonrpc";
+  WebSocketMessageReader,
+  WebSocketMessageWriter,
+} from "vscode-ws-jsonrpc";
 
 export default function CodeEditor({ value, onChange, language }) {
   const editorRef = useRef(null);
@@ -15,7 +14,7 @@ export default function CodeEditor({ value, onChange, language }) {
   useEffect(() => {
     const lang = language?.toLowerCase();
 
-    // Stop LSP if not Python
+    // Cleanup if not Python
     if (lang !== "python") {
       if (clientRef.current) {
         clientRef.current.stop();
@@ -33,42 +32,40 @@ export default function CodeEditor({ value, onChange, language }) {
     const socket = new WebSocket("ws://localhost:3000/python");
     socketRef.current = socket;
 
-    listen({
-      webSocket: socket,
-      onConnection: (connection) => {
-        console.log("[LSP] WebSocket connected");
+    socket.onopen = () => {
+      console.log("[LSP] WebSocket connected");
 
-        const client = new MonacoLanguageClient({
-          name: "Python Language Client",
-          clientOptions: {
-            documentSelector: ["python"],
-            workspaceFolder: {
-              uri: "file:///workspace",
-              name: "workspace",
-            },
-            errorHandler: {
-              error: () => ErrorAction.Continue,
-              closed: () => CloseAction.Restart,
-            },
+      const reader = new WebSocketMessageReader(socket);
+      const writer = new WebSocketMessageWriter(socket);
+
+      const client = new MonacoLanguageClient({
+        name: "Python Language Client",
+        clientOptions: {
+          documentSelector: ["python"],
+          workspaceFolder: {
+            uri: "file:///workspace",
+            name: "workspace",
           },
-          connectionProvider: {
-            get: async () => connection,
-          },
-        });
+        },
+        connectionProvider: {
+          get: async () => ({ reader, writer }),
+        },
+      });
 
-        client.start();
-        clientRef.current = client;
-
-        connection.onClose(() => {
-          console.log("[LSP] Connection closed");
-          client.stop();
-          clientRef.current = null;
-        });
-      },
-    });
+      client.start();
+      clientRef.current = client;
+    };
 
     socket.onerror = (err) => {
       console.error("[LSP] WebSocket error", err);
+    };
+
+    socket.onclose = () => {
+      console.log("[LSP] WebSocket closed");
+      if (clientRef.current) {
+        clientRef.current.stop();
+        clientRef.current = null;
+      }
     };
 
     return () => {
