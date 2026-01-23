@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws';
 import { spawn } from 'child_process';
+import { WebSocketMessageReader, WebSocketMessageWriter, toSocket } from 'vscode-ws-jsonrpc';
 
 const wss = new WebSocketServer({ port: 3000 });
 console.log('LSP backend starting on ws://localhost:3000');
@@ -14,13 +15,22 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
-  const pyrightCmd = '"C:/Users/Anees Prince/AppData/Roaming/npm/pyright-langserver.cmd"';
-  const serverProcess = spawn('cmd.exe', ['/c', pyrightCmd, '--stdio'], { shell: true });
+  // Convert WebSocket to proper rpc socket
+  const socket = toSocket(ws);
 
-  // pipe WebSocket messages to Pyright
-  ws.on('message', (msg) => serverProcess.stdin.write(msg));
-  serverProcess.stdout.on('data', (data) => ws.send(data));
+  const pyrightPath = '"C:/Users/Anees Prince/AppData/Roaming/npm/pyright-langserver.cmd"';
+  const serverProcess = spawn('cmd.exe', ['/c', pyrightPath, '--stdio'], { shell: true });
+
+  console.log('Pyright started, wrapping with JSON-RPC');
+
+  // Wrap stdout/stderr in JSON-RPC reader/writer
+  const reader = new WebSocketMessageReader(socket);
+  const writer = new WebSocketMessageWriter(socket);
+
+  // Pipe Pyright process
+  serverProcess.stdout.on('data', (data) => writer.write(data));
   serverProcess.stderr.on('data', (data) => console.error(`Pyright error: ${data.toString()}`));
+  reader.listen((msg) => serverProcess.stdin.write(msg));
 
   ws.on('close', () => {
     console.log(`Connection closed: ${path}`);
