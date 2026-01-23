@@ -1,71 +1,85 @@
-import { useEffect, useRef } from 'react';
-import Editor from '@monaco-editor/react';
-import { MonacoLanguageClient } from 'monaco-languageclient';
+import { useEffect, useRef } from "react";
+import Editor from "@monaco-editor/react";
 import {
-  WebSocketMessageReader,
-  WebSocketMessageWriter
-} from 'vscode-ws-jsonrpc';
+  MonacoLanguageClient,
+  CloseAction,
+  ErrorAction,
+} from "monaco-languageclient";
+import { listen } from "vscode-ws-jsonrpc";
 
 export default function CodeEditor({ value, onChange, language }) {
   const editorRef = useRef(null);
   const clientRef = useRef(null);
+  const socketRef = useRef(null);
 
   useEffect(() => {
     const lang = language?.toLowerCase();
 
-    if (lang !== 'python') {
-      clientRef.current?.stop();
-      clientRef.current = null;
+    // Stop LSP if not Python
+    if (lang !== "python") {
+      if (clientRef.current) {
+        clientRef.current.stop();
+        clientRef.current = null;
+      }
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
       return;
     }
 
-    const startPythonLSP = async () => {
-      try {
-        console.log('[LSP] Starting Python LSP');
+    console.log("[LSP] Starting Python LSP");
 
-        const socket = new WebSocket('ws://localhost:3000/python');
+    const socket = new WebSocket("ws://localhost:3000/python");
+    socketRef.current = socket;
 
-        socket.onopen = () => {
-          console.log('[LSP] WebSocket connected');
+    listen({
+      webSocket: socket,
+      onConnection: (connection) => {
+        console.log("[LSP] WebSocket connected");
 
-          const reader = new WebSocketMessageReader(socket);
-          const writer = new WebSocketMessageWriter(socket);
-
-          const client = new MonacoLanguageClient({
-            name: 'Python Language Client',
-            clientOptions: {
-              documentSelector: ['python'],
-              workspaceFolder: {
-                uri: 'file:///workspace',
-                name: 'workspace'
-              }
+        const client = new MonacoLanguageClient({
+          name: "Python Language Client",
+          clientOptions: {
+            documentSelector: ["python"],
+            workspaceFolder: {
+              uri: "file:///workspace",
+              name: "workspace",
             },
-            connectionProvider: {
-              get: async () => ({ reader, writer })
-            }
-          });
+            errorHandler: {
+              error: () => ErrorAction.Continue,
+              closed: () => CloseAction.Restart,
+            },
+          },
+          connectionProvider: {
+            get: async () => connection,
+          },
+        });
 
-          client.start();
-          clientRef.current = client;
-        };
+        client.start();
+        clientRef.current = client;
 
-        socket.onerror = (err) => {
-          console.error('[LSP] WebSocket error', err);
-        };
+        connection.onClose(() => {
+          console.log("[LSP] Connection closed");
+          client.stop();
+          clientRef.current = null;
+        });
+      },
+    });
 
-        socket.onclose = () => {
-          console.log('[LSP] WebSocket closed');
-        };
-      } catch (err) {
-        console.error('[LSP] Failed to start Python LSP', err);
-      }
+    socket.onerror = (err) => {
+      console.error("[LSP] WebSocket error", err);
     };
 
-    startPythonLSP();
-
     return () => {
-      clientRef.current?.stop();
-      clientRef.current = null;
+      if (clientRef.current) {
+        clientRef.current.stop();
+        clientRef.current = null;
+      }
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
     };
   }, [language]);
 
@@ -73,18 +87,18 @@ export default function CodeEditor({ value, onChange, language }) {
     <div className="h-full w-full">
       <Editor
         height="100%"
-        language={language || 'javascript'}
+        language={language || "javascript"}
         theme="vs-dark"
         value={value}
         onChange={onChange}
         options={{
           minimap: { enabled: false },
           fontSize: 14,
-          renderValidationDecorations: 'on',
+          renderValidationDecorations: "on",
           lineNumbersMinChars: 3,
           padding: { top: 16 },
           scrollBeyondLastLine: false,
-          automaticLayout: true
+          automaticLayout: true,
         }}
         onMount={(editor) => {
           editorRef.current = editor;
