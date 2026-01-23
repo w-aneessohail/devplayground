@@ -11,12 +11,16 @@ export default function CodeEditor({ value, onChange, language }) {
   useEffect(() => {
     const lang = language?.toLowerCase();
 
-    // Stop LSP when language changes
+    // Stop LSP if not Python
     if (lang !== "python") {
-      clientRef.current?.stop();
-      clientRef.current = null;
-      socketRef.current?.close();
-      socketRef.current = null;
+      if (clientRef.current) {
+        clientRef.current.stop();
+        clientRef.current = null;
+      }
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
       return;
     }
 
@@ -37,6 +41,11 @@ export default function CodeEditor({ value, onChange, language }) {
             workspaceFolder: {
               uri: "file:///workspace",
               name: "workspace",
+            },
+            // Use default handlers instead of CloseAction/ErrorAction
+            errorHandler: {
+              error: () => ({ action: 1 }),   // 1 = Continue
+              closed: () => ({ action: 2 }),  // 2 = Restart
             },
           },
           connectionProvider: {
@@ -60,10 +69,14 @@ export default function CodeEditor({ value, onChange, language }) {
     };
 
     return () => {
-      clientRef.current?.stop();
-      clientRef.current = null;
-      socketRef.current?.close();
-      socketRef.current = null;
+      if (clientRef.current) {
+        clientRef.current.stop();
+        clientRef.current = null;
+      }
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
     };
   }, [language]);
 
