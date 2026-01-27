@@ -1,3 +1,5 @@
+'use client';
+
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
@@ -7,6 +9,14 @@ const useAxios = (url, method = 'GET', body = null, deps = []) => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    // Skip request if URL is null or undefined
+    if (!url) {
+      setData(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     setLoading(true);
     setError(null);
 

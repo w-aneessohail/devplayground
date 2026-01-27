@@ -1,129 +1,183 @@
-import { useEffect, useRef } from "react";
+'use client';
+
+import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
-import { MonacoLanguageClient } from "monaco-languageclient";
-import {
-  toSocket,
-  WebSocketMessageReader,
-  WebSocketMessageWriter,
-} from "vscode-ws-jsonrpc";
+import { lspClient } from "../services/lspClient";
+import * as monaco from "monaco-editor";
+
+const DOC_URI = "file:///workspace/main.py";
 
 export default function CodeEditor({ value, onChange, language }) {
-  const clientRef = useRef(null);
-  const socketRef = useRef(null);
+  const editorRef = useRef(null);
+  const documentVersionRef = useRef(1);
+  const [diagnostics, setDiagnostics] = useState([]);
+  const lspStateRef = useRef({
+    initialized: false,
+    initializing: false,
+    connected: false,
+  });
+  const updateTimeoutRef = useRef(null);
 
+  // Set up diagnostics callback once
+  useEffect(() => {
+    const handleDiagnostics = (params) => {
+      console.log("[LSP] Diagnostics received:", params.diagnostics?.length || 0, "items");
+
+      if (editorRef.current && params?.diagnostics) {
+        const model = editorRef.current.getModel();
+        if (model) {
+          const markers = params.diagnostics.map((diag) => {
+            // Map LSP severity: 1=Error, 2=Warning, 3=Information, 4=Hint
+            // Monaco severity: 8=Error, 4=Warning, 2=Info, 1=Hint
+            const severityMap = { 1: 8, 2: 4, 3: 2, 4: 1 };
+            return {
+              severity: severityMap[diag.severity] || 1,
+              message: diag.message,
+              startLineNumber: Math.max(1, diag.range?.start?.line + 1 || 1),
+              startColumn: Math.max(1, diag.range?.start?.character + 1 || 1),
+              endLineNumber: Math.max(1, diag.range?.end?.line + 1 || 1),
+              endColumn: Math.max(1, diag.range?.end?.character + 1 || 1),
+            };
+          });
+
+          console.log("[LSP] Setting", markers.length, "markers");
+          monaco.editor.setModelMarkers(model, "lsp", markers);
+          setDiagnostics(params.diagnostics);
+        }
+      } else {
+        // Clear markers if no diagnostics
+        if (editorRef.current) {
+          const model = editorRef.current.getModel();
+          if (model) {
+            monaco.editor.setModelMarkers(model, "lsp", []);
+          }
+        }
+      }
+    };
+
+    lspClient.setDiagnosticsCallback(handleDiagnostics);
+
+    // Cleanup callback on unmount
+    return () => {
+      lspClient.setDiagnosticsCallback(null);
+    };
+  }, []);
+
+  // Connect/disconnect LSP based on language
   useEffect(() => {
     const lang = (language || "").toLowerCase();
 
-    // Stop LSP if not Python
-    if (lang !== "python") {
-      if (clientRef.current) {
-        try {
-          clientRef.current.stop();
-        } catch (e) {
-          console.log("[LSP] Error stopping client:", e.message);
+    const manageLSPConnection = async () => {
+      // Disconnect if not Python
+      if (lang !== "python") {
+        if (lspStateRef.current.initialized || lspStateRef.current.connected) {
+          try {
+            console.log("[LSP] Switching away from Python, disconnecting...");
+            await lspClient.disconnect();
+            lspStateRef.current.initialized = false;
+            lspStateRef.current.connected = false;
+
+            // Clear markers
+            if (editorRef.current) {
+              const model = editorRef.current.getModel();
+              if (model) {
+                monaco.editor.setModelMarkers(model, "lsp", []);
+              }
+            }
+          } catch (error) {
+            console.error("[LSP] Error disconnecting:", error);
+          }
         }
-        clientRef.current = null;
+        return;
       }
 
-      if (socketRef.current) {
-        try {
-          socketRef.current.close();
-        } catch (e) {
-          console.log("[LSP] Error closing socket:", e.message);
-        }
-        socketRef.current = null;
+      // Connect to Python LSP
+      if (
+        lspStateRef.current.initialized ||
+        lspStateRef.current.initializing
+      ) {
+        return; // Already connected or connecting
       }
-      return;
-    }
 
-    console.log("[LSP] Starting Python LSP...");
-
-    // Create WebSocket connection
-    const ws = new WebSocket("ws://localhost:3000/python");
-    socketRef.current = ws;
-
-    ws.onopen = () => {
-      console.log("[LSP] WebSocket connected");
+      lspStateRef.current.initializing = true;
 
       try {
-        // Create JSON-RPC transports
-        const rpcSocket = toSocket(ws);
-        const reader = new WebSocketMessageReader(rpcSocket);
-        const writer = new WebSocketMessageWriter(rpcSocket);
+        console.log("[LSP] Connecting to Python LSP...");
+        await lspClient.connect("ws://localhost:3000/python");
+        lspStateRef.current.connected = true;
 
-        // Create and start client
-        const client = new MonacoLanguageClient({
-          name: "Python Language Client",
-          clientOptions: {
-            documentSelector: ["python"],
-            errorHandler: {
-              error: () => ({ action: 1 }), // Continue
-              closed: () => ({ action: 2 }), // Restart
-            },
-          },
-          connectionProvider: {
-            get: async () => ({ reader, writer }),
-          },
-        });
+        console.log("[LSP] Opening document...");
+        await lspClient.openDocument(DOC_URI, "python", value || "");
+        lspStateRef.current.initialized = true;
 
-        clientRef.current = client;
-
-        // Start client
-        client.start();
-        console.log("[LSP] Python LSP client started successfully");
+        console.log("[LSP] Python LSP fully initialized");
       } catch (error) {
-        console.error("[LSP] Error creating client:", error);
-        ws.close();
+        console.error("[LSP] Failed to initialize:", error);
+        lspStateRef.current.connected = false;
+        lspStateRef.current.initialized = false;
+      } finally {
+        lspStateRef.current.initializing = false;
       }
     };
 
-    ws.onerror = (err) => {
-      console.error("[LSP] WebSocket error:", err);
-    };
+    manageLSPConnection();
 
-    ws.onclose = () => {
-      console.log("[LSP] Connection closed");
-      if (clientRef.current) {
-        try {
-          clientRef.current.stop();
-        } catch (e) {
-          console.log("[LSP] Error stopping client on close:", e.message);
-        }
-        clientRef.current = null;
-      }
-    };
-
-    // Cleanup on unmount or language change
+    // Cleanup on unmount
     return () => {
-      if (clientRef.current) {
-        try {
-          clientRef.current.stop();
-        } catch (e) {
-          console.log("[LSP] Error during cleanup:", e.message);
-        }
-        clientRef.current = null;
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
       }
-
-      if (socketRef.current && socketRef.current.readyState !== 3) {
-        try {
-          socketRef.current.close();
-        } catch (e) {
-          console.log("[LSP] Error closing socket during cleanup:", e.message);
-        }
-      }
-      socketRef.current = null;
     };
   }, [language]);
 
-  // Give Monaco a stable "file" URI for Python (helps LSP like Pyright)
+  // Sync code changes to LSP (debounced)
+  useEffect(() => {
+    const lang = (language || "").toLowerCase();
+    if (lang !== "python" || !lspStateRef.current.initialized) {
+      return;
+    }
+
+    // Clear any pending update
+    if (updateTimeoutRef.current) {
+      clearTimeout(updateTimeoutRef.current);
+    }
+
+    // Debounce updates by 500ms
+    updateTimeoutRef.current = setTimeout(async () => {
+      try {
+        documentVersionRef.current++;
+        console.log(
+          "[LSP] Updating document, version:",
+          documentVersionRef.current
+        );
+        await lspClient.updateDocument(
+          DOC_URI,
+          value || "",
+          documentVersionRef.current
+        );
+      } catch (error) {
+        console.error("[LSP] Error updating document:", error);
+      }
+    }, 500);
+
+    return () => {
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+      }
+    };
+  }, [value, language]);
+
   const path =
     (language || "").toLowerCase() === "python"
-      ? "file:///workspace/main.py"
+      ? DOC_URI
       : "file:///workspace/main.txt";
 
   return (
     <div className="h-full w-full">
       <Editor
+        onMount={(editor) => {
+          editorRef.current = editor;
+        }}
         height="100%"
         language={language || "javascript"}
         theme="vs-dark"
@@ -137,6 +191,11 @@ export default function CodeEditor({ value, onChange, language }) {
           padding: { top: 16 },
           scrollBeyondLastLine: false,
           automaticLayout: true,
+          quickSuggestions: {
+            other: true,
+            comments: false,
+            strings: false,
+          },
         }}
       />
     </div>
