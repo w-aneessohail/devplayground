@@ -4,7 +4,7 @@ import { createServerProcess, createWebSocketConnection, forward } from 'vscode-
 
 const require = createRequire(import.meta.url);
 
-// LSP configurations
+// LSP configurations (all languages)
 const lspServers = {
   python: {
     command: process.execPath,
@@ -28,8 +28,18 @@ const lspServers = {
   },
   cpp: {
     command: 'clangd',
-    args: [],  // FIXED: No --stdio needed on Windows
+    args: [],  // No --stdio needed on Windows
     displayName: 'Clangd (C++)'
+  },
+  java: {
+    command: 'cmd.exe',
+    args: [
+      '/c',
+      'C:\\jdtls\\bin\\jdtls.bat',  // ← your jdtls.bat path
+      '-configuration', 'C:\\jdtls\\config_win',  // ← your config_win path
+      '-data', 'C:\\jdtls\\workspace'  // ← your workspace folder
+    ],
+    displayName: 'Eclipse JDT LS (Java)'
   }
 };
 
