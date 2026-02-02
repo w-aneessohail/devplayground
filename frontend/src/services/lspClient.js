@@ -5,14 +5,16 @@ class LSPClient {
     this.pendingRequests = new Map();
     this.diagnosticsCallback = null;
     this.initialized = false;
+    this.currentLanguage = null;
   }
 
-  async connect(url) {
+  async connect(url, language) {
     return new Promise((resolve, reject) => {
       try {
-        console.log("[LSP] Creating WebSocket to:", url);
+        console.log("[LSP] Creating WebSocket to:", url, "for language:", language);
         this.ws = new WebSocket(url);
         this.ws.binaryType = "arraybuffer";
+        this.currentLanguage = language;
 
         this.ws.onopen = async () => {
           try {
@@ -22,7 +24,6 @@ class LSPClient {
             this.ws.onmessage = (event) => {
               try {
                 const message = JSON.parse(event.data);
-                console.log("[LSP] Received message:", message.method || message.result);
                 this.handleMessage(message);
               } catch (e) {
                 console.error("[LSP] Error parsing message:", e);
@@ -32,7 +33,7 @@ class LSPClient {
             // Send initialize request
             await this.initialize();
             this.initialized = true;
-            console.log("[LSP] LSP fully initialized");
+            console.log("[LSP] LSP fully initialized for", language);
             resolve();
           } catch (error) {
             console.error("[LSP] Initialization error:", error);
@@ -41,12 +42,12 @@ class LSPClient {
         };
 
         this.ws.onerror = (event) => {
-          console.error("[LSP] WebSocket error");
+          console.error("[LSP] WebSocket error for", language);
           reject(new Error("WebSocket error"));
         };
 
         this.ws.onclose = () => {
-          console.log("[LSP] WebSocket closed");
+          console.log("[LSP] WebSocket closed for", language);
           this.initialized = false;
         };
       } catch (error) {
@@ -136,10 +137,11 @@ class LSPClient {
 
   async initialize() {
     console.log("[LSP] Sending initialize request");
+    
     const result = await this.sendRequest("initialize", {
       processId: null,
-      rootPath: "/workspace",
-      rootUri: "file:///workspace",
+      rootPath: null,
+      rootUri: null,
       capabilities: {
         textDocument: {
           synchronization: {

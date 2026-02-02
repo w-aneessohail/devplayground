@@ -1,11 +1,17 @@
-'use client';
-
 import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import { lspClient } from "../services/lspClient";
 import * as monaco from "monaco-editor";
 
-const DOC_URI = "file:///workspace/main.py";
+// Language mapping for LSP and file extensions
+const LANGUAGE_CONFIG = {
+  python: { lsp: "python", ext: ".py", uri: "file:///workspace/main.py" },
+  javascript: { lsp: "javascript", ext: ".js", uri: "file:///workspace/main.js" },
+  typescript: { lsp: "typescript", ext: ".ts", uri: "file:///workspace/main.ts" },
+  php: { lsp: "php", ext: ".php", uri: "file:///workspace/main.php" },
+  cpp: { lsp: "cpp", ext: ".cpp", uri: "file:///workspace/main.cpp" },
+  java: { lsp: "java", ext: ".java", uri: "file:///workspace/Main.java" },
+};
 
 export default function CodeEditor({ value, onChange, language }) {
   const editorRef = useRef(null);
@@ -15,14 +21,13 @@ export default function CodeEditor({ value, onChange, language }) {
     initialized: false,
     initializing: false,
     connected: false,
+    currentLanguage: null,
   });
   const updateTimeoutRef = useRef(null);
 
   // Set up diagnostics callback once
   useEffect(() => {
     const handleDiagnostics = (params) => {
-      console.log("[LSP] Diagnostics received:", params.diagnostics?.length || 0, "items");
-
       if (editorRef.current && params?.diagnostics) {
         const model = editorRef.current.getModel();
         if (model) {
@@ -40,7 +45,6 @@ export default function CodeEditor({ value, onChange, language }) {
             };
           });
 
-          console.log("[LSP] Setting", markers.length, "markers");
           monaco.editor.setModelMarkers(model, "lsp", markers);
           setDiagnostics(params.diagnostics);
         }
@@ -57,7 +61,6 @@ export default function CodeEditor({ value, onChange, language }) {
 
     lspClient.setDiagnosticsCallback(handleDiagnostics);
 
-    // Cleanup callback on unmount
     return () => {
       lspClient.setDiagnosticsCallback(null);
     };
@@ -65,54 +68,66 @@ export default function CodeEditor({ value, onChange, language }) {
 
   // Connect/disconnect LSP based on language
   useEffect(() => {
-    const lang = (language || "").toLowerCase();
+    const lang = (language || "javascript").toLowerCase();
+    const config = LANGUAGE_CONFIG[lang];
+
+    // If language is not supported, just return
+    if (!config) {
+      console.warn("[LSP] Language not supported:", lang);
+      return;
+    }
 
     const manageLSPConnection = async () => {
-      // Disconnect if not Python
-      if (lang !== "python") {
-        if (lspStateRef.current.initialized || lspStateRef.current.connected) {
-          try {
-            console.log("[LSP] Switching away from Python, disconnecting...");
-            await lspClient.disconnect();
-            lspStateRef.current.initialized = false;
-            lspStateRef.current.connected = false;
+      // If switching languages, disconnect first
+      if (
+        lspStateRef.current.currentLanguage &&
+        lspStateRef.current.currentLanguage !== lang &&
+        (lspStateRef.current.initialized || lspStateRef.current.connected)
+      ) {
+        try {
+          console.log(`[LSP] Switching from ${lspStateRef.current.currentLanguage} to ${lang}, disconnecting...`);
+          await lspClient.disconnect();
+          lspStateRef.current.initialized = false;
+          lspStateRef.current.connected = false;
 
-            // Clear markers
-            if (editorRef.current) {
-              const model = editorRef.current.getModel();
-              if (model) {
-                monaco.editor.setModelMarkers(model, "lsp", []);
-              }
+          // Clear markers
+          if (editorRef.current) {
+            const model = editorRef.current.getModel();
+            if (model) {
+              monaco.editor.setModelMarkers(model, "lsp", []);
             }
-          } catch (error) {
-            console.error("[LSP] Error disconnecting:", error);
           }
+        } catch (error) {
+          console.error("[LSP] Error disconnecting:", error);
         }
+      }
+
+      // Already connected to this language
+      if (lspStateRef.current.currentLanguage === lang && lspStateRef.current.initialized) {
         return;
       }
 
-      // Connect to Python LSP
-      if (
-        lspStateRef.current.initialized ||
-        lspStateRef.current.initializing
-      ) {
-        return; // Already connected or connecting
+      // Already initializing
+      if (lspStateRef.current.initializing) {
+        return;
       }
 
       lspStateRef.current.initializing = true;
+      lspStateRef.current.currentLanguage = lang;
 
       try {
-        console.log("[LSP] Connecting to Python LSP...");
-        await lspClient.connect("ws://localhost:3000/python");
+        const wsUrl = `ws://localhost:3000/${config.lsp}`;
+        console.log(`[LSP] Connecting to ${lang} LSP at ${wsUrl}...`);
+        await lspClient.connect(wsUrl, lang);
         lspStateRef.current.connected = true;
 
-        console.log("[LSP] Opening document...");
-        await lspClient.openDocument(DOC_URI, "python", value || "");
+        console.log(`[LSP] Opening document for ${lang}...`);
+        await lspClient.openDocument(config.uri, config.lsp, value || "");
         lspStateRef.current.initialized = true;
 
-        console.log("[LSP] Python LSP fully initialized");
+        console.log(`[LSP] ${lang.toUpperCase()} LSP fully initialized`);
       } catch (error) {
-        console.error("[LSP] Failed to initialize:", error);
+        console.error(`[LSP] Failed to initialize ${lang}:`, error);
         lspStateRef.current.connected = false;
         lspStateRef.current.initialized = false;
       } finally {
@@ -132,8 +147,10 @@ export default function CodeEditor({ value, onChange, language }) {
 
   // Sync code changes to LSP (debounced)
   useEffect(() => {
-    const lang = (language || "").toLowerCase();
-    if (lang !== "python" || !lspStateRef.current.initialized) {
+    const lang = (language || "javascript").toLowerCase();
+    const config = LANGUAGE_CONFIG[lang];
+
+    if (!config || !lspStateRef.current.initialized) {
       return;
     }
 
@@ -146,12 +163,8 @@ export default function CodeEditor({ value, onChange, language }) {
     updateTimeoutRef.current = setTimeout(async () => {
       try {
         documentVersionRef.current++;
-        console.log(
-          "[LSP] Updating document, version:",
-          documentVersionRef.current
-        );
         await lspClient.updateDocument(
-          DOC_URI,
+          config.uri,
           value || "",
           documentVersionRef.current
         );
@@ -167,10 +180,9 @@ export default function CodeEditor({ value, onChange, language }) {
     };
   }, [value, language]);
 
-  const path =
-    (language || "").toLowerCase() === "python"
-      ? DOC_URI
-      : "file:///workspace/main.txt";
+  const lang = (language || "javascript").toLowerCase();
+  const config = LANGUAGE_CONFIG[lang];
+  const docUri = config?.uri || "file:///workspace/main.txt";
 
   return (
     <div className="h-full w-full">
@@ -179,11 +191,11 @@ export default function CodeEditor({ value, onChange, language }) {
           editorRef.current = editor;
         }}
         height="100%"
-        language={language || "javascript"}
+        language={lang}
         theme="vs-dark"
         value={value}
         onChange={onChange}
-        path={path}
+        path={docUri}
         options={{
           minimap: { enabled: false },
           fontSize: 14,
