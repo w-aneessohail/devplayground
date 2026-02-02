@@ -28,16 +28,16 @@ const lspServers = {
   },
   cpp: {
     command: 'clangd',
-    args: [],  // No --stdio needed on Windows
+    args: [],
     displayName: 'Clangd (C++)'
   },
   java: {
     command: 'cmd.exe',
     args: [
       '/c',
-      'C:\\jdtls\\bin\\jdtls.bat',  // ← your jdtls.bat path
-      '-configuration', 'C:\\jdtls\\config_win',  // ← your config_win path
-      '-data', 'C:\\jdtls\\workspace'  // ← your workspace folder
+      'C:\\jdtls\\bin\\jdtls.bat',
+      '-configuration', 'C:\\jdtls\\config_win',
+      '-data', 'C:\\jdtls\\workspace'
     ],
     displayName: 'Eclipse JDT LS (Java)'
   }
